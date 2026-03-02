@@ -62,12 +62,3 @@ The Python bridge queries the HTTP endpoint and exposes MPRIS interface:
 ```bash
 pixi run python saltplayer_mpris_http.py
 ```
-
-## Advantages over Window Automation
-
-- ✅ Full metadata (title, artist, album, album artist)
-- ✅ Accurate playback state
-- ✅ Real-time position updates
-- ✅ No dependency on window title parsing
-- ✅ Works on any platform (X11, Wayland, etc.)
-- ✅ More reliable and maintainable
