@@ -17,20 +17,14 @@ A Salt Player plugin that exposes playback information via HTTP for MPRIS D-Bus 
 ## Building the Plugin
 
 ```bash
-cd saltplayer-mpris-plugin
-./gradlew plugin
+gradle plugin
 ```
 
 The plugin will be built as `build/libs/plugin-saltplayer-mpris-1.0.0.zip`
 
 ## Installing the Plugin
 
-1. Build the plugin (see above)
-2. Copy the `.zip` file to Salt Player's plugin directory:
-   - Windows: `%APPDATA%/Salt Player/plugins/`
-   - Linux (Wine/Proton): `~/.wine/drive_c/users/<username>/AppData/Roaming/Salt Player/plugins/`
-3. Restart Salt Player
-4. Enable the plugin in Salt Player's settings
+Install using workshop function in SPW app.
 
 ## API Endpoints
 
