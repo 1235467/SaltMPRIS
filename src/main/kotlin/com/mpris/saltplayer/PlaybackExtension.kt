@@ -10,12 +10,6 @@ import org.pf4j.Extension
 class PlaybackExtension : PlaybackExtensionPoint {
 
     override fun onStateChanged(state: PlaybackExtensionPoint.State) {
-        PlaybackState.playerState = when (state) {
-            PlaybackExtensionPoint.State.Idle -> "Stopped"
-            PlaybackExtensionPoint.State.Buffering -> "Playing"
-            PlaybackExtensionPoint.State.Ready -> "Playing"
-            PlaybackExtensionPoint.State.Ended -> "Stopped"
-        }
         PlaybackState.playbackStatus = when (state) {
             PlaybackExtensionPoint.State.Idle,
             PlaybackExtensionPoint.State.Ended -> "Stopped"
@@ -69,9 +63,6 @@ object PlaybackState {
 
     @Volatile
     var playbackStatus: String = "Stopped"
-
-    @Volatile
-    var playerState: String = "Stopped"
 
     @Volatile
     var position: Long = 0L

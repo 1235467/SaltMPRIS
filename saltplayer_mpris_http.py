@@ -4,6 +4,7 @@ Salt Player MPRIS Bridge (HTTP-based)
 Queries Salt Player plugin HTTP endpoint and exposes MPRIS D-Bus interface
 """
 
+import logging
 import requests
 import time
 from typing import Optional, Dict
@@ -18,11 +19,17 @@ from gi.repository import GLib
 HTTP_ENDPOINT = "http://localhost:8765/status"
 POLL_INTERVAL = 1000  # milliseconds
 
+log = logging.getLogger("saltmpris")
+
+
 class SaltPlayerHttpController:
     """Controls Salt Player via HTTP API"""
 
+    MAX_BACKOFF = 30  # seconds
+
     def __init__(self):
         self.last_status = None
+        self._consecutive_failures = 0
 
     def get_status(self) -> Optional[Dict]:
         """Get current playback status from HTTP endpoint"""
@@ -30,18 +37,32 @@ class SaltPlayerHttpController:
             response = requests.get(HTTP_ENDPOINT, timeout=1)
             if response.status_code == 200:
                 self.last_status = response.json()
+                if self._consecutive_failures > 0:
+                    log.info("Reconnected to Salt Player plugin")
+                self._consecutive_failures = 0
                 return self.last_status
         except requests.exceptions.RequestException as e:
-            print(f"Error querying HTTP endpoint: {e}")
+            self._consecutive_failures += 1
+            if self._consecutive_failures == 1:
+                log.warning("Lost connection to Salt Player plugin: %s", e)
+            elif self._consecutive_failures % 10 == 0:
+                log.warning(
+                    "Still disconnected (%d consecutive failures)",
+                    self._consecutive_failures,
+                )
 
         return self.last_status
+
+    @property
+    def is_connected(self) -> bool:
+        return self._consecutive_failures == 0
 
     def _post(self, path: str, timeout: float = 1.0) -> bool:
         try:
             response = requests.post(f"http://localhost:8765{path}", timeout=timeout)
             return response.status_code == 200
         except requests.exceptions.RequestException as e:
-            print(f"Error calling HTTP endpoint {path}: {e}")
+            log.warning("Error calling %s: %s", path, e)
             return False
 
     def play(self) -> bool:
@@ -61,6 +82,7 @@ class SaltPlayerHttpController:
 
     def seek_to(self, position_ms: int) -> bool:
         return self._post(f"/seek/{position_ms}")
+
 
 class SaltPlayerMPRIS(dbus.service.Object):
     """MPRIS2 D-Bus interface for Salt Player"""
@@ -89,16 +111,33 @@ class SaltPlayerMPRIS(dbus.service.Object):
             'Metadata': dbus.Dictionary({}, signature='sv'),
             'Position': dbus.Int64(0)
         }
+        self._poll_interval = POLL_INTERVAL
 
         # Start polling
-        GLib.timeout_add(POLL_INTERVAL, self.update_status)
+        GLib.timeout_add(self._poll_interval, self.update_status)
 
     def update_status(self) -> bool:
         """Poll Salt Player HTTP endpoint for current status"""
         status = self.controller.get_status()
 
         if not status:
+            # If disconnected, slow down polling to reduce log spam
+            if not self.controller.is_connected:
+                backoff = min(
+                    POLL_INTERVAL * (2 ** min(self._backoff_level(), 5)),
+                    self.controller.MAX_BACKOFF * 1000,
+                )
+                if backoff > self._poll_interval:
+                    self._poll_interval = backoff
+                    GLib.timeout_add(self._poll_interval, self.update_status)
+                    return False  # Stop current timer
             return True  # Continue polling
+
+        # Restore normal poll interval after reconnection
+        if self._poll_interval != POLL_INTERVAL:
+            self._poll_interval = POLL_INTERVAL
+            GLib.timeout_add(self._poll_interval, self.update_status)
+            return False  # Stop current (slow) timer
 
         # Update playback status
         playback_status = status.get('playbackStatus', 'Stopped')
@@ -133,7 +172,7 @@ class SaltPlayerMPRIS(dbus.service.Object):
                 'mpris:trackid': track_id,
                 'xesam:title': title,
                 'xesam:album': (track.get('album') or ''),
-                'mpris:length': dbus.Int64(0),  # Duration not available
+                'mpris:length': dbus.Int64(0),  # Duration not available from framework
             }, signature='sv')
 
             # Add artist
@@ -164,87 +203,76 @@ class SaltPlayerMPRIS(dbus.service.Object):
 
         return True  # Continue polling
 
+    def _backoff_level(self) -> int:
+        return min(self.controller._consecutive_failures, 5)
+
     # MPRIS Root Interface
     @dbus.service.method(MPRIS_IFACE)
     def Raise(self):
-        """Raise the player window"""
         pass
 
     @dbus.service.method(MPRIS_IFACE)
     def Quit(self):
-        """Quit the player"""
         pass
 
     # MPRIS Player Interface
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def Play(self):
-        """Start playback"""
-        print("MPRIS: Play()")
+        log.debug("Play()")
         self.controller.play()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def Pause(self):
-        """Pause playback"""
-        print("MPRIS: Pause()")
+        log.debug("Pause()")
         self.controller.pause()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def PlayPause(self):
-        """Toggle play/pause"""
-        print("MPRIS: PlayPause()")
+        log.debug("PlayPause()")
         self.controller.play_pause()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def Stop(self):
-        """Stop playback"""
-        print("MPRIS: Stop()")
+        log.debug("Stop()")
         self.controller.pause()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def Next(self):
-        """Next track"""
-        print("MPRIS: Next()")
+        log.debug("Next()")
         self.controller.next()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE)
     def Previous(self):
-        """Previous track"""
-        print("MPRIS: Previous()")
+        log.debug("Previous()")
         self.controller.previous()
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE, in_signature='x')
     def Seek(self, offset):
-        """Seek in current track"""
-        # offset is microseconds relative to current position
         current_us = int(self.properties.get('Position', 0))
         target_us = max(0, current_us + int(offset))
-        print(f"MPRIS: Seek({offset}) -> {target_us}")
+        log.debug("Seek(%d) -> %d", offset, target_us)
         self.controller.seek_to(target_us // 1000)
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE, in_signature='ox')
     def SetPosition(self, track_id, position):
-        """Set position in track"""
-        # position is absolute microseconds
-        print(f"MPRIS: SetPosition({track_id}, {position})")
+        log.debug("SetPosition(%s, %d)", track_id, position)
         self.controller.seek_to(int(position) // 1000)
         self.update_status()
 
     @dbus.service.method(MPRIS_PLAYER_IFACE, in_signature='s')
     def OpenUri(self, uri):
-        """Open URI"""
         pass
 
     # Properties Interface
     @dbus.service.method(dbus.PROPERTIES_IFACE, in_signature='ss', out_signature='v')
     def Get(self, interface, prop):
-        """Get property value"""
         if prop in self.properties:
             return self.properties[prop]
         raise dbus.exceptions.DBusException(
@@ -254,7 +282,6 @@ class SaltPlayerMPRIS(dbus.service.Object):
 
     @dbus.service.method(dbus.PROPERTIES_IFACE, in_signature='s', out_signature='a{sv}')
     def GetAll(self, interface):
-        """Get all properties"""
         if interface == self.MPRIS_IFACE:
             return {
                 'CanQuit': self.properties['CanQuit'],
@@ -280,13 +307,17 @@ class SaltPlayerMPRIS(dbus.service.Object):
 
     @dbus.service.signal(dbus.PROPERTIES_IFACE, signature='sa{sv}as')
     def PropertiesChanged(self, interface, changed, invalidated):
-        """Signal when properties change"""
         pass
 
 
 def main():
-    """Main entry point"""
-    print("Starting Salt Player MPRIS bridge (HTTP-based)...")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    log.info("Starting Salt Player MPRIS bridge")
 
     # Setup D-Bus
     DBusGMainLoop(set_as_default=True)
@@ -296,16 +327,14 @@ def main():
     # Create MPRIS interface
     mpris = SaltPlayerMPRIS(name)
 
-    print("Salt Player MPRIS bridge running")
-    print("Querying HTTP endpoint at http://localhost:8765/status")
-    print("Make sure the Salt Player plugin is installed and running")
+    log.info("Polling %s every %dms", HTTP_ENDPOINT, POLL_INTERVAL)
 
     # Run main loop
     loop = GLib.MainLoop()
     try:
         loop.run()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        log.info("Shutting down")
         loop.quit()
 
 
