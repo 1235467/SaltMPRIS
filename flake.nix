@@ -23,7 +23,7 @@
           version = "0-unstable";
           src = ./.;
 
-          nativeBuildInputs = [ pkgs.gradle pkgs.jdk21 ];
+          nativeBuildInputs = [ pkgs.gradle pkgs.jdk21 pkgs.cacert ];
 
           outputHashAlgo = "sha256";
           outputHashMode = "recursive";
@@ -32,10 +32,10 @@
           outputHash = pkgs.lib.fakeHash;
 
           JAVA_HOME = "${pkgs.jdk21}";
-          GRADLE_USER_HOME = "$(mktemp -d)";
 
           buildPhase = ''
             export GRADLE_USER_HOME=$(mktemp -d)
+            export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             gradle --no-daemon resolveDependencies
           '';
 
