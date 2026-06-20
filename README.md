@@ -14,10 +14,22 @@ A Salt Player plugin that exposes playback information via HTTP for MPRIS D-Bus 
 - Exposes MPRIS D-Bus interface
 - Enables media key control and desktop integration
 
+## Prerequisites
+
+This project uses a [Nix flake](https://nixos.wiki/wiki/Flakes) to provide all build dependencies (JDK 21, Gradle, Python + libraries). Install Nix with flakes enabled, then:
+
+```bash
+# Enter the dev shell (provides java, gradle, python, dbus libs)
+nix develop
+
+# Or run commands directly without entering the shell
+nix develop -c <command>
+```
+
 ## Building the Plugin
 
 ```bash
-gradle plugin
+nix develop -c gradle plugin
 ```
 
 The plugin will be built as `build/libs/plugin-saltplayer-mpris-1.0.0.zip`
@@ -60,5 +72,13 @@ Health check endpoint:
 The Python bridge queries the HTTP endpoint and exposes MPRIS interface:
 
 ```bash
-pixi run python saltplayer_mpris_http.py
+# Run directly via nix (no dev shell needed)
+nix run
+
+# Or build it as a standalone script
+nix build
+./result/bin/saltmpris-bridge
+
+# Or run from the dev shell
+nix develop -c python3 saltplayer_mpris_http.py
 ```
