@@ -6,3 +6,6 @@ build
 
 # Ignore Kotlin/IDE caches
 .kotlin
+
+# Nix build output
+/result

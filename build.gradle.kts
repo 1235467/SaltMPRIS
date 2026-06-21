@@ -68,3 +68,9 @@ tasks.register<Jar>("plugin") {
     }
     archiveExtension.set("zip")
 }
+
+tasks.register("resolveDependencies") {
+    doLast {
+        configurations.filter { it.isCanBeResolved }.forEach { it.resolve() }
+    }
+}
